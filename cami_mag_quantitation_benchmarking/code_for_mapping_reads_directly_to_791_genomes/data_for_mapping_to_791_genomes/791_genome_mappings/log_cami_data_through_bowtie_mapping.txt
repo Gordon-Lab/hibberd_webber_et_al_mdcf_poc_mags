@@ -1,0 +1,136 @@
+03/03/2021
+ 
+ First, move the 791 genomes/MAGs into a new folder:
+ 
+rsync -r /scratch/jglab/hmbucklin/02092021_CAMI_mouse_data_resync/19122017_mousegut_scaffolds/genomes/ /scratch/jglab/hmbucklin/03032021_CAMI_mouse_reanalysis/791_genomes
+[detached from 10794.pts-18.htcf]
+
+Completed- now going to add the N's to all of these using the script kallisto_index_fasta_preprocess.py synced from /lts/jglab/users/hmbucklin/12212020_working_w_final_POC_MAGs/faa_MAGs
+
+#!/bin/bash
+#SBATCH --cpus-per-task=24
+#SBATCH --mail-type=BEGIN,END,FAIL,REQUEUE
+#SBATCH --mail-user="hmbucklin@wustl.edu"
+#SBATCH --mem=50G
+
+ml py-biopython/1.73-python-3.6.5
+
+./kallisto_index_fasta_preprocess.py \
+-d /scratch/jglab/hmbucklin/03032021_CAMI_mouse_reanalysis/791_genomes \
+-o /scratch/jglab/hmbucklin/03032021_CAMI_mouse_reanalysis/791_genomes_w_Ns \
+-e .fa
+
+################################################################################
+
+#!/bin/bash
+#SBATCH --mem=10G
+#SBATCH --cpus-per-task=12
+#SBATCH --mail-type=BEGIN,END,FAIL,REQUEUE
+#SBATCH --mail-user="hmbucklin@wustl.edu"
+#SBATCH --array=0-63
+
+#Need to isolate the R1 and R2 reads from the combined fastq file for each sample:
+
+gunzip -c /scratch/jglab/hmbucklin/02092021_CAMI_mouse_data_resync/19122017_mousegut_scaffolds/2017.12.29_11.37.26_sample_"${SLURM_ARRAY_TASK_ID}"/reads/anonymous_reads.fq.gz > /scratch/jglab/hmbucklin/02092021_CAMI_mouse_data_resync/19122017_mousegut_scaffolds/2017.12.29_11.37.26_sample_"${SLURM_ARRAY_TASK_ID}"/reads/sample_"${SLURM_ARRAY_TASK_ID}"_all_reads.fq
+
+paste - - - - - - - - < /scratch/jglab/hmbucklin/02092021_CAMI_mouse_data_resync/19122017_mousegut_scaffolds/2017.12.29_11.37.26_sample_"${SLURM_ARRAY_TASK_ID}"/reads/sample_"${SLURM_ARRAY_TASK_ID}"_all_reads.fq \
+    | tee >(cut -f 1-4 | tr "\t" "\n" > /scratch/jglab/hmbucklin/02092021_CAMI_mouse_data_resync/19122017_mousegut_scaffolds/2017.12.29_11.37.26_sample_"${SLURM_ARRAY_TASK_ID}"/reads/sample_"${SLURM_ARRAY_TASK_ID}"_R1_reads.fq) \
+    |       cut -f 5-8 | tr "\t" "\n" > /scratch/jglab/hmbucklin/02092021_CAMI_mouse_data_resync/19122017_mousegut_scaffolds/2017.12.29_11.37.26_sample_"${SLURM_ARRAY_TASK_ID}"/reads/sample_"${SLURM_ARRAY_TASK_ID}"_R2_reads.fq
+
+
+##################################################################
+#Next, need to make the kallisto index:
+
+#!/bin/bash
+#SBATCH --cpus-per-task=24
+#SBATCH --mail-type=BEGIN,END,FAIL,REQUEUE
+#SBATCH --mail-user="hmbucklin@wustl.edu"
+#SBATCH --mem=100G
+
+ml kallisto/0.43.0
+
+kallisto index \
+-i kalliso_791_Ns_CAMI_index \
+/scratch/jglab/hmbucklin/03032021_CAMI_mouse_reanalysis/791_genomes_w_Ns/*.fna
+
+
+##################################################################
+#Finally, run kallisto mapping
+
+#!/bin/bash
+#SBATCH --cpus-per-task=24
+#SBATCH --mail-type=END,FAIL,REQUEUE
+#SBATCH --mail-user="hmbucklin@wustl.edu"
+#SBATCH --mem=100G
+#SBATCH --array=0-63
+
+ml kallisto/0.43.0
+
+kallisto quant \
+-i kalliso_791_Ns_CAMI_index \
+-b 100 \
+-o sample_"${SLURM_ARRAY_TASK_ID}" \
+/scratch/jglab/hmbucklin/02092021_CAMI_mouse_data_resync/19122017_mousegut_scaffolds/2017.12.29_11.37.26_sample_"${SLURM_ARRAY_TASK_ID}"/reads/sample_"${SLURM_ARRAY_TASK_ID}"_R1_reads.fq \
+/scratch/jglab/hmbucklin/02092021_CAMI_mouse_data_resync/19122017_mousegut_scaffolds/2017.12.29_11.37.26_sample_"${SLURM_ARRAY_TASK_ID}"/reads/sample_"${SLURM_ARRAY_TASK_ID}"_R2_reads.fq
+
+
+
+for i in {0..63}
+do
+
+SAMPLE_NAME=sample_"${i}"
+echo $SAMPLE_NAME
+
+rsync /scratch/jglab/hmbucklin/03032021_CAMI_mouse_reanalysis/"${SAMPLE_NAME}"/abundance.tsv /scratch/jglab/hmbucklin/03032021_CAMI_mouse_reanalysis/all_sample_kallisto_mapping/"${SAMPLE_NAME}"_abundance.tsv
+
+done
+
+
+for i in {0..63}
+do
+echo $i
+rsync /scratch/jglab/hmbucklin/02092021_CAMI_mouse_data_resync/19122017_mousegut_scaffolds/abundance"${i}".tsv /scratch/jglab/hmbucklin/03032021_CAMI_mouse_reanalysis/all_sample_real_abundances/
+done
+
+##################################################################
+
+
+####Script initially cut off here, but from the scripts in /lts/jglab/users/hmbucklin/03032021_CAMI_mouse_reanalysis/updated_bowtie_CAMI_data.sbatch, it looks like this is what I did for the Bowtie. I am wondering if maybe my LTS folder ran out of memory before this was all completed, because not everything is backed up, but I think this is what I had
+
+#!/bin/bash
+#SBATCH --mem=100G
+#SBATCH --cpus-per-task=12
+#SBATCH --mail-type=BEGIN,END,FAIL,REQUEUE
+#SBATCH --mail-user="hmbucklin@wustl.edu"
+#SBATCH --array=0-63
+
+#Reading in modules needed for the script
+ml bowtie2/2.3.4.1
+ml samtools/1.9
+ml bedtools/2.27.1
+ml subread/1.6.2
+
+COUNTS_DIR="/scratch/jglab/hmbucklin/03032021_CAMI_mouse_reanalysis/redo_corrected_bowtie_counts_all_samples"
+SAMPLE_NAME=sample_"${SLURM_ARRAY_TASK_ID}"
+
+mkdir -p /scratch/jglab/hmbucklin/03032021_CAMI_mouse_reanalysis/redo_corrected_bowtie_counts_all_samples
+
+if [ -f /scratch/jglab/hmbucklin/03032021_CAMI_mouse_reanalysis/791_genomes/all_791_genomes_concatenated.fa ]; then
+
+        if [ ! -f /scratch/jglab/hmbucklin/03032021_CAMI_mouse_reanalysis/791_genomes/all_791_genomes_concatenated.fa.1.bt2 ]; then
+        bowtie2-build /scratch/jglab/hmbucklin/03032021_CAMI_mouse_reanalysis/791_genomes/all_791_genomes_concatenated.fa /scratch/jglab/hmbucklin/03032021_CAMI_mouse_reanalysis/791_genomes/all_791_genomes_concatenated.fa
+ fi
+fi
+
+   bowtie2 \
+        -p "${SLURM_CPUS_PER_TASK}" \
+        -1 /scratch/jglab/hmbucklin/02092021_CAMI_mouse_data_resync/19122017_mousegut_scaffolds/2017.12.29_11.37.26_sample_"${SLURM_ARRAY_TASK_ID}"/reads/sample_"${SLURM_ARRAY_TASK_ID}"_R1_reads.fq \
+        -2 /scratch/jglab/hmbucklin/02092021_CAMI_mouse_data_resync/19122017_mousegut_scaffolds/2017.12.29_11.37.26_sample_"${SLURM_ARRAY_TASK_ID}"/reads/sample_"${SLURM_ARRAY_TASK_ID}"_R2_reads.fq \
+        -x /scratch/jglab/hmbucklin/03032021_CAMI_mouse_reanalysis/791_genomes/all_791_genomes_concatenated.fa \
+        | samtools view --threads "${SLURM_CPUS_PER_TASK}" -huS - \
+        | samtools sort --threads "${SLURM_CPUS_PER_TASK}" -n - \
+        | samtools fixmate --threads "${SLURM_CPUS_PER_TASK}" -m - - \
+        | samtools sort --threads "${SLURM_CPUS_PER_TASK}" - \
+        | samtools markdup --threads "${SLURM_CPUS_PER_TASK}" -rs - "${COUNTS_DIR}/${SAMPLE_NAME}_nodup.bam"
+
+         #header would be "chromosome" "depth" "bases with depth > 2" "chromosome size" "fraction of bases on chromosome with depth = depth"

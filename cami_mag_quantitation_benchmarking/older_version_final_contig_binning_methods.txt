@@ -1,0 +1,1436 @@
+#Documentation for gathering the data:
+#Gathered by Hannah Lynn 11/25/2020
+
+#2nd CAMI Toy Mouse Gut Dataset
+
+#Data location: /HL_working_folder/CAMI_data
+
+#Go to this website: https://data.cami-challenge.org/participate
+#Go to the second tab all of the way down at the bottom, and at the bottom of the second page click on Description [+]
+#2nd CAMI Toy Mouse Gut Dataset
+
+#Downloaded files containing information about which taxa are used:
+mkdir taxonomy_files
+cd taxonomy_files
+wget https://openstack.cebitec.uni-bielefeld.de:8080/swift/v1/CAMI_DATABASES/taxdump_cami2_toy.tar.gz 
+#opening tar.gz file:
+tar -zxvf taxdump_cami2_toy.tar.gz 
+cd ..
+
+#Downloading cami java client tool to be able to download all of the data:
+wget https://data.cami-challenge.org/camiClient.jar
+
+#Downloaded the actual data: (option to download everything!)
+java -jar camiClient.jar -d https://openstack.cebitec.uni-bielefeld.de:8080/swift/v1/CAMISIM_MOUSEGUT . -p .
+
+##########################################################################################################################
+#Overview of dataset:
+
+#Data set description: Simulated metagenome data from the guts of different mice, vendors and positions in the gut
+#Underlying genome sources: NCBI RefSeq scaffolds, 18.1.2018
+#Underlying microbiome profile source: still unreleased
+#Taxonomy used: https://openstack.cebitec.uni-bielefeld.de:8080/swift/v1/CAMI_DATABASES/taxdump_cami2_toy.tar.gz
+
+#Sample descriptions: Simulated Illumina HiSeq metagenome data
+#Number of samples: 64 (12 different mice microbiota)
+#Total size: 320 Gbp
+#Read length: 2x150 bp
+#Insert size mean: 270 bp
+#Insert size s.d.: 20 bp
+
+#Sample descriptions: Simulated Pacific Bioscience metagenome data
+#Number of samples: 64 (12 different mice microbiota)
+#Total size: 320 Gbp
+#Average read length: 3,000 bp
+#Read length s.d.: 1,000 bp
+
+#Folder structure:
+
+#Metadata in human-readable/text format
+#sample folders start with the date of creation and end with the sample number:
+#yyyy.mm.dd_hh.mm.ss_sample_#
+
+#In every sample folder there are three subfolders, bam, contigs and reads:
+
+#The bam folder contains the mapping of all the created reads to the input genomes:
+#Inside this folder is a bam file for every genome for which at least one read was produced, 
+#which is uniquely indicated by a combination of OTU and a running ID counter for the number of genomes included in that OTU in the sample: OTU_ID.bam
+
+#The contigs folder contains the gold standard assembly for that particular sample
+#It contains two files, the gold standard in fasta format:
+#anonymous_gsa.fasta.gz
+#And the mapping for each contigs to its genome/taxon id and position in this genome:
+#gsa_mapping.tsv.gz
+
+#The reads folder contains the created reads for that sample:
+#It contains two files, one with the fq reads themselves, containing both ends for paired end sequencing and with anonymised names:
+#anonymous_reads.fq.gz
+#And the second one is a mapping of every single read to the genome it originated from and the original read ID (pre anonymisation)
+#reads_mapping.tsv.gz
+
+#every data set contains one abundance file per sample mapping OTUs to genomes:
+#abundance#.tsv
+
+#every data set contains the pooled gold standard assembly over all samples in the folder
+#anonymous_gsa_pooled.fasta.gz
+
+#config file used for creating the data set at hand (can be used as input to CAMISIM for re-creating the data set)
+#config.ini
+
+#mapping from the original (BIOM) OTU name to the genome fasta file
+#genome_to_id.tsv
+
+#genomes folder containing all the reference genomes used over all samples (using the mapping from genome_to_id.tsv)
+#genomes
+#This folder contains all the fasta files of the downloaded genomes:
+#genome_name.fa
+
+#Since the contigs are anonymized, a file mapping each contig to its genome/taxon id and position in the respective genome is provided
+#gsa_pooled_mapping.tsv.gz
+
+#To each input OTU (from the BIOM file), two tax IDs are mapped: 
+#One of the level on which the OTU was mapped to the NCBI and one to the specifically downloaded genome, 
+#contains a novelty_category column in case new genomes are provided, otherwise this column is "new_strain" and can be ignored
+#metadata.tsv
+
+#In the folder “hybrid” there are assembly and binning gold standards created from both the short and long read data sets. 
+#For every sample as well as all samples pooled, the bam-files of short and long read simulators 
+#(as described for the “bam” subfolder above) are merged and the gold standards calculated the same way as for the individual short or long read samples.
+
+
+https://www.microbiome-cosi.org/cami/cami/cami2
+
+*Benchmark first 10 samples as correlate to the POC study, all 64 samples as correlate to our study
+
+*Challenge is to take input reads and return a cross-sample assembly or single sample assembly
+*If cannot do a cross-assembly on all 64 samples, do the first 10 and submit first 10 co-assembly
+*Profiling- take input reads, return the profiles of the reads
+*Binning- take input reads or gold standard contigs, output is genome bin assignment for reads or contigs
+*Taxon binning- input reads or gold standard contigs, output is taxon bin
+
+############################################################################################################################
+#Starting to work with the data:
+
+rsync /HL_working_folder/02092021_CAMI_mouse_data_resync/19122017_mousegut_scaffolds/anonymous_gsa_pooled.fasta /HL_working_folder/03292021_abundances_for_anonymous_contigs/
+
+#############################################################################################
+
+
+#!/bin/bash
+#SBATCH --cpus-per-task=24
+#SBATCH --mail-type=BEGIN,END,FAIL,REQUEUE
+#SBATCH --mail-user="hmbucklin@wustl.edu"
+#SBATCH --mem=50G
+
+ml kallisto/0.43.0
+
+kallisto index \
+-i kalliso_CAMI_anonymous_contigs_index \
+/HL_working_folder/03292021_abundances_for_anonymous_contigs/anonymous_gsa_pooled.fasta
+
+Submitted batch job 30174365
+
+
+#############################################################################################
+
+#!/bin/bash
+#SBATCH --mem=100G
+#SBATCH --cpus-per-task=12
+#SBATCH --mail-type=END,FAIL,REQUEUE
+#SBATCH --mail-user="hmbucklin@wustl.edu"
+
+#Reading in modules needed for the script
+ml bowtie2/2.3.4.1
+
+COUNTS_DIR="/HL_working_folder/03292021_abundances_for_anonymous_contigs/bowtie_counts"
+SAMPLE_NAME=sample_"${SLURM_ARRAY_TASK_ID}"
+
+mkdir -p /HL_working_folder/03292021_abundances_for_anonymous_contigs/bowtie_counts
+
+if [ -f /HL_working_folder/03292021_abundances_for_anonymous_contigs/anonymous_gsa_pooled.fasta ]; then
+
+        if [ ! -f /HL_working_folder/03292021_abundances_for_anonymous_contigs/anonymous_gsa_pooled.fasta.1.bt2 ]; then
+        bowtie2-build /HL_working_folder/03292021_abundances_for_anonymous_contigs/anonymous_gsa_pooled.fasta /HL_working_folder/03292021_abundances_for_anonymous_contigs/anonymous_gsa_pooled.fasta
+    fi
+fi
+
+
+#!/bin/bash
+#SBATCH --mem=100G
+#SBATCH --cpus-per-task=12
+#SBATCH --mail-type=END,FAIL,REQUEUE
+#SBATCH --mail-user="hmbucklin@wustl.edu"
+#SBATCH --array=0-63
+
+#Reading in modules needed for the script
+ml bowtie2/2.3.4.1
+ml samtools/1.9
+ml bedtools/2.27.1
+ml subread/1.6.2
+
+   bowtie2 \
+        -p "${SLURM_CPUS_PER_TASK}" \
+        -1 /HL_working_folder/02092021_CAMI_mouse_data_resync/19122017_mousegut_scaffolds/2017.12.29_11.37.26_sample_"${SLURM_ARRAY_TASK_ID}"/reads/sample_"${SLURM_ARRAY_TASK_ID}"_R1_reads.fq \
+        -2 /HL_working_folder/02092021_CAMI_mouse_data_resync/19122017_mousegut_scaffolds/2017.12.29_11.37.26_sample_"${SLURM_ARRAY_TASK_ID}"/reads/sample_"${SLURM_ARRAY_TASK_ID}"_R2_reads.fq \
+        -x /HL_working_folder/03292021_abundances_for_anonymous_contigs/anonymous_gsa_pooled.fasta \
+        | samtools view --threads "${SLURM_CPUS_PER_TASK}" -huS - \
+        | samtools sort --threads "${SLURM_CPUS_PER_TASK}" -n - \
+        | samtools fixmate --threads "${SLURM_CPUS_PER_TASK}" -m - - \
+        | samtools sort --threads "${SLURM_CPUS_PER_TASK}" - \
+        | samtools markdup --threads "${SLURM_CPUS_PER_TASK}" -rs - "${COUNTS_DIR}/${SAMPLE_NAME}_nodup.bam"
+
+         #header would be "chromosome" "depth" "bases with depth > 2" "chromosome size" "fraction of bases on chromosome with depth = depth"        
+
+
+Submitted batch job 30174369
+
+For some reason this did not generate the reverse indexes- investigating, finally got it to work (just had to re-run for some reason)
+
+###############################################################################################
+
+[detached from 24652.pts-81.htcf]
+
+
+rsync -r --progress /HL_working_folder/03032021_CAMI_mouse_reanalysis /HL_working_folder_store/
+
+############################################################################################
+
+#!/bin/bash
+#SBATCH --cpus-per-task=24
+#SBATCH --mail-type=BEGIN,END,FAIL,REQUEUE
+#SBATCH --mail-user="hmbucklin@wustl.edu"
+#SBATCH --mem=100G
+#SBATCH --array=0-63
+
+ml kallisto/0.43.0
+
+kallisto quant \
+-i kalliso_CAMI_anonymous_contigs_index \
+-b 100 \
+-o sample_"${SLURM_ARRAY_TASK_ID}" \
+/HL_working_folder/02092021_CAMI_mouse_data_resync/19122017_mousegut_scaffolds/2017.12.29_11.37.26_sample_"${SLURM_ARRAY_TASK_ID}"/reads/sample_"${SLURM_ARRAY_TASK_ID}"_R1_reads.fq \
+/HL_working_folder/02092021_CAMI_mouse_data_resync/19122017_mousegut_scaffolds/2017.12.29_11.37.26_sample_"${SLURM_ARRAY_TASK_ID}"/reads/sample_"${SLURM_ARRAY_TASK_ID}"_R2_reads.fq
+
+#################################################################################################
+
+#Kallisto finished, now going to sync the abundances 
+
+for i in {0..63}
+do
+
+SAMPLE_NAME=sample_"${i}"
+echo $SAMPLE_NAME
+
+rsync /HL_working_folder/03292021_abundances_for_anonymous_contigs/"${SAMPLE_NAME}"/abundance.tsv /HL_working_folder/03292021_abundances_for_anonymous_contigs/all_samples_kallisto/"${SAMPLE_NAME}"_abundance.tsv
+
+done
+
+
+for i in {0..63}
+do
+
+SAMPLE_NAME=sample_"${i}"
+echo $SAMPLE_NAME
+
+rsync /HL_working_folder/03292021_abundances_for_anonymous_contigs/"${SAMPLE_NAME}"/abundance.h5 /HL_working_folder/03292021_abundances_for_anonymous_contigs/"${SAMPLE_NAME}"/"${SAMPLE_NAME}"_abundance.h5
+
+done
+
+
+rsync /HL_working_folder/03292021_abundances_for_anonymous_contigs/sample_*/sample_*.h5 /HL_working_folder/03292021_abundances_for_anonymous_contigs/all_samples_h5_from_kallisto/
+
+*Made sure all tsv (sample named) and h5 files were in the /HL_working_folder/03292021_abundances_for_anonymous_contigs/all_samples_h5_from_kallisto/ folder
+
+Then ran the following from there:
+
+###############################################################################################
+
+#!/bin/bash
+#SBATCH --cpus-per-task=24
+#SBATCH --mail-type=END,FAIL,REQUEUE
+#SBATCH --mail-user="hmbucklin@wustl.edu"
+#SBATCH --mem=100G
+
+ml R/3.6.1
+
+Rscript kallisto_depth.R
+
+
+#############################################################################################
+library(progress)
+library(rhdf5)
+library(matrixStats)
+library(dplyr)
+library(tibble)
+
+setwd("/HL_working_folder/03292021_abundances_for_anonymous_contigs/all_samples_h5_from_kallisto")
+
+tpm <- function(counts, effLen) {
+  rate <- log(counts) - log(effLen)
+  denom <- log(sum(exp(rate)))
+  exp(rate - denom + log(1E6))
+}
+
+#subgroup_file <- read.table("subgroup_file.txt", sep = "\t")
+#colnames(subgroup_file) <- c("SID", "PID")
+
+#participants <- c("sample_0", "sample_1", "sample_2", "sample_3", "sample_4", "sample_5", "sample_6", "sample_7", "sample_8", "sample_9")
+
+#pb <- progress_bar$new(format = "[:bar] :current/:total (:percent) :eta", total = 952)
+#for (i in 1:length(participants)) {
+
+files <- list.files(".", "*.h5", full.names = TRUE, recursive = TRUE)
+
+SID_array <- NA
+
+res <- data.frame()
+
+for (j in 1:length(files)) {
+  #    pb$tick()
+  SID <- gsub(".h5$", "", basename(files[j]))
+  if (is.na(SID_array[1])) {
+    SID_array <- SID
+  } else {
+    SID_array <- c(SID_array, SID)
+  }
+  boot_array <- h5read(files[j], "bootstrap")
+  df_boot <- data.frame(contigName = h5read(files[j], "aux/ids"),
+                        contigLen = h5read(files[j], "/aux/lengths"),
+                        contigEffLen = h5read(files[j], "/aux/eff_lengths"))
+  
+  if (length(res) == 0) {
+    res <- df_boot %>%
+      select(-contigEffLen)
+  }
+  
+  for (k in 1:length(boot_array)) {
+    df_boot <- df_boot %>%
+      bind_cols(data.frame(tpm(boot_array[[k]], df_boot$contigEffLen)))
+    #%>% rename_with(function(x) paste0("bs", k - 1)))
+    colnames(df_boot)[k+3] <- paste0("bs", k-1)
+  }
+  
+  res_kallisto <- read.table(list.files(".", paste0(SID, ".tsv"), full.names = TRUE, recursive = TRUE), sep = "\t", header = TRUE)
+  
+  if (!all(df_boot$contigName == res_kallisto$target_id)) {
+    stop()
+  }
+  
+  res_sub <- data.frame(ab = res_kallisto$tpm,
+                        #                          mean_boot = rowMeans(df_boot %>% select(-contigName, -contigLen, -contigEffLen)),
+                        var = rowVars(as.matrix(df_boot %>% select(-contigName, -contigLen, -contigEffLen))),
+                        contigName = df_boot$contigName,
+                        contigLen = df_boot$contigLen)
+  colnames(res_sub)[colnames(res_sub) == "ab"] <- SID
+  colnames(res_sub)[colnames(res_sub) == "var"] <- paste0(SID, "-var")
+  
+  res <- res %>%
+    full_join(res_sub, by = c("contigName", "contigLen"))
+  
+}
+
+# res <- res %>%
+#   select(SID_array) %>%
+#   transmute(totalAvgDepth = rowSums(.)) %>%
+#   bind_cols(res) %>%
+#   relocate(totalAvgDepth, .after = contigLen)
+
+all_depths <- res %>%
+  select(all_of(SID_array))
+totalAvgDepth <- rowSums(all_depths)
+res_final <- add_column(res, totalAvgDepth, .after="contigLen")
+
+write.table(res_final, paste0("CAMI_mouse_to_anonymous_contigs_kallisto.depth"), sep = "\t", quote = F, row.names = F)
+
+
+###############################################################################################################
+
+#!/bin/bash
+#SBATCH --mem=250G
+#SBATCH --cpus-per-task=12
+#SBATCH --mail-type=END,FAIL,REQUEUE
+#SBATCH --mail-user="hmbucklin@wustl.edu"
+
+
+ml metabat/2.12.1
+
+#Then, can run MetaBat2:
+
+metabat2 \
+-i /HL_working_folder/03292021_abundances_for_anonymous_contigs/anonymous_gsa_pooled.fasta \
+-a /HL_working_folder/03292021_abundances_for_anonymous_contigs/all_samples_h5_from_kallisto/CAMI_mouse_to_anonymous_contigs_kallisto.depth \
+-o /HL_working_folder/03292021_abundances_for_anonymous_contigs/all_samples_h5_from_kallisto/MetaBAT_kallisto \
+-v
+
+3#########################################################################################################
+
+Next, get ready to run MaxBin:
+
+*copied the depth file to list from Steven's folder:
+
+./006_Kallisto_depth_file_to_list.py -i /HL_working_folder/03292021_abundances_for_anonymous_contigs/all_samples_h5_from_kallisto/CAMI_mouse_to_anonymous_contigs_kallisto.depth -p /HL_working_folder/03292021_abundances_for_anonymous_contigs/all_samples_h5_from_kallisto
+
+
+
+#!/bin/bash
+#SBATCH --mem=250G
+#SBATCH --cpus-per-task=12
+#SBATCH --mail-type=END,FAIL,REQUEUE
+#SBATCH --mail-user="hmbucklin@wustl.edu"
+
+#ml maxbin/2.2.7
+ml perl/5.20.3
+ml perl-modules/5.20.3
+
+export PATH=$PATH:/HL_working_folder/MaxBin/2.2.7/
+
+perl /HL_working_folder/MaxBin/2.2.7/run_MaxBin.pl  \
+        -contig /HL_working_folder/03292021_abundances_for_anonymous_contigs/anonymous_gsa_pooled.fasta \
+        -out /HL_working_folder/03292021_abundances_for_anonymous_contigs/all_samples_h5_from_kallisto/MaxBin_kallisto \
+        -abund_list /HL_working_folder/03292021_abundances_for_anonymous_contigs/all_samples_h5_from_kallisto/CAMI_mouse_to_anonymous_contigs_kallisto.depth_list \
+        -thread 24
+
+###########################################################################################################
+
+Bowtie has finished- now going to get metabat and maxbin running:
+
+
+#!/bin/bash
+#SBATCH --mem=200G
+#SBATCH --cpus-per-task=12
+#SBATCH --mail-type=END,FAIL,REQUEUE
+#SBATCH --mail-user="hmbucklin@wustl.edu"
+
+
+./jgi_summarize_bam_contig_depths --outputDepth bowtie_to_anonymous_contigs_depth /HL_working_folder/03292021_abundances_for_anonymous_contigs/bowtie_counts/*.bam
+
+ml metabat/2.12.1
+
+#Then, can run MetaBat2:
+
+metabat2 \
+-i /HL_working_folder/03292021_abundances_for_anonymous_contigs/anonymous_gsa_pooled.fasta \
+-a /HL_working_folder/03292021_abundances_for_anonymous_contigs/bowtie_counts/bowtie_to_anonymous_contigs_depth \
+-o /HL_working_folder/03292021_abundances_for_anonymous_contigs/bowtie_counts/MetaBAT \
+-v
+
+#######################################################################################################
+
+There are 925 bins in total coming out from MetaBAT
+
+Now I want to isolate the names of the contigs that have been grouped together and compare which ones should be and shouldn't be together:
+
+First, make a file that has MAG,contig as the header:
+echo MAG,contig > contigs_in_MAGs.csv
+
+Then, make the for loop to add contigs to the file:
+
+for i in {1..925}
+do
+
+echo $i
+
+MAG=MetaBAT_kallisto."${i}".fa
+
+grep ">" $MAG | sed 's/[>,]//g'| sed "s/^/$MAG,/"  >> contigs_in_MAGs.csv
+
+done
+
+
+######################################################################################################
+
+First, make a file that has MAG,contig as the header:
+echo MAG,contig > contigs_in_MAGs_bowtie.csv
+
+Then, make the for loop to add contigs to the file:
+
+for i in {1..578}
+do
+
+echo $i
+
+MAG=MetaBAT."${i}".fa
+
+grep ">" $MAG | sed 's/[>,]//g'| sed "s/^/$MAG,/"  >> contigs_in_MAGs_bowtie.csv
+
+done
+
+######################################################################################################
+
+Need to run MaxBin as well:
+
+./depth_table_to_file.py -i /HL_working_folder/03292021_abundances_for_anonymous_contigs/bowtie_counts/bowtie_to_anonymous_contigs_depth -p /HL_working_folder/03292021_abundances_for_anonymous_contigs/bowtie_counts
+
+
+****Make sure that the output directory is created ahead of time!!!!
+
+#!/bin/bash
+#SBATCH --mem=250G
+#SBATCH --cpus-per-task=12
+#SBATCH --mail-type=START,END,FAIL,REQUEUE
+#SBATCH --mail-user="hmbucklin@wustl.edu"
+
+#ml maxbin/2.2.7
+ml perl/5.20.3
+ml perl-modules/5.20.3
+
+export PATH=$PATH:/HL_working_folder/MaxBin/2.2.7/
+
+perl /HL_working_folder/MaxBin/2.2.7/run_MaxBin.pl  \
+        -contig /HL_working_folder/03292021_abundances_for_anonymous_contigs/anonymous_gsa_pooled.fasta \
+        -out /HL_working_folder/03292021_abundances_for_anonymous_contigs/bowtie_counts/MaxBin_bowtie/ \
+        -abund_list /HL_working_folder/03292021_abundances_for_anonymous_contigs/bowtie_counts/bowtie_to_anonymous_contigs_depth.depth_list \
+        -thread 24
+
+
+#####################################################################################################
+
+rsync -avH --progress /HL_working_folder/03292021_abundances_for_anonymous_contigs/ /HL_working_folder_store/
+[detached from 12384.pts-20.htcf]
+
+######################################################################################################
+
+I am 
+ 
+ conda create -n concoct_env python=3 concoct
+ 
+ Going here:  /home/hmbucklin/.conda/envs/concoct_env
+
+ 
+ # To activate this environment, use
+#
+#     $ conda activate concoct_env
+#
+# To deactivate an active environment, use
+#
+#     $ conda deactivate
+ 
+ conda activate concoct_env
+
+
+Location:
+/home/hmbucklin/.conda/envs/concoct_env/bin
+
+
+########################################################################################################
+
+for i in {0..63}; do samtools index anonymous_reads_sample_${i}.sorted.bam ; done
+cut_up_fasta.py anonymous_gsa_pooled.fasta -c 10000 -o 0 --merge_last -b contigs_10K.bed > contigs_10K.fa
+concoct_coverage_table.py contigs_10K.bed /host/benchmarking/fmeyer/output/bowtie2/mouse_gut/sorted_bam/anonymous_reads_sample_*.sorted.bam > coverage_table.tsv
+concoct --composition_file contigs_10K.fa --coverage_file coverage_table.tsv -b
+merge_cutup_clustering.py clustering_gt1000.csv > clustering_merged.csv
+
+
+
+cut_up_fasta.py /HL_working_folder/03292021_abundances_for_anonymous_contigs/anonymous_gsa_pooled.fasta -c 10000 -o 0 --merge_last -b contigs_10K.bed > contigs_10K.fa
+
+
+Worked and generated contigs_10K.bed and contigs_10K.fa
+
+###########################################################################################################
+
+#!/bin/bash
+#SBATCH --cpus-per-task=24
+#SBATCH --mail-type=BEGIN,END,FAIL,REQUEUE
+#SBATCH --mail-user="hmbucklin@wustl.edu"
+#SBATCH --mem=100G
+#SBATCH --array=0-63
+
+ml samtools/1.9
+
+samtools index /HL_working_folder/03292021_abundances_for_anonymous_contigs/bowtie_counts/sample_"${SLURM_ARRAY_TASK_ID}"_nodup.bam
+
+*generates a .bai file that is the companion to the indexed form of the bam
+
+##########################################################################################################
+
+#synced a copy of the contigs_10K.bed and contigs_10K.fa into the new folder:
+
+#!/bin/bash
+#SBATCH --cpus-per-task=24
+#SBATCH --mail-type=BEGIN,END,FAIL,REQUEUE
+#SBATCH --mail-user="hmbucklin@wustl.edu"
+#SBATCH --mem=50G
+
+export PATH=$PATH:/home/hmbucklin/.conda/envs/concoct_env/bin/
+
+concoct_coverage_table.py contigs_10K.bed /HL_working_folder/03292021_abundances_for_anonymous_contigs/bowtie_counts/sample_*_nodup.bam > coverage_table.tsv
+concoct --composition_file contigs_10K.fa --coverage_file coverage_table.tsv -b concoct_bowtie_output/
+merge_cutup_clustering.py concoct_bowtie_output/clustering_gt1000.csv > concoct_bowtie_output/clustering_merged.csv
+
+
+Finished!
+#########################################################################################################
+
+#!/bin/bash
+#SBATCH --cpus-per-task=24
+#SBATCH --mail-type=BEGIN,END,FAIL,REQUEUE
+#SBATCH --mail-user="hmbucklin@wustl.edu"
+#SBATCH --mem=250G
+
+ml kallisto/0.43.0
+
+kallisto index \
+-i kallisto_concoct_index \
+/HL_working_folder/03292021_abundances_for_anonymous_contigs/bowtie_counts/contigs_10K.fa
+
+Submitted batch job 30174365
+
+Finished, now going to run Kallisto:
+
+
+#!/bin/bash
+#SBATCH --cpus-per-task=24
+#SBATCH --mail-type=BEGIN,END,FAIL,REQUEUE
+#SBATCH --mail-user="hmbucklin@wustl.edu"
+#SBATCH --mem=100G
+#SBATCH --array=0-63
+
+ml kallisto/0.43.0
+
+kallisto quant \
+-i kallisto_concoct_index \
+-b 100 \
+-o sample_"${SLURM_ARRAY_TASK_ID}" \
+/HL_working_folder/02092021_CAMI_mouse_data_resync/19122017_mousegut_scaffolds/2017.12.29_11.37.26_sample_"${SLURM_ARRAY_TASK_ID}"/reads/sample_"${SLURM_ARRAY_TASK_ID}"_R1_reads.fq \
+/HL_working_folder/02092021_CAMI_mouse_data_resync/19122017_mousegut_scaffolds/2017.12.29_11.37.26_sample_"${SLURM_ARRAY_TASK_ID}"/reads/sample_"${SLURM_ARRAY_TASK_ID}"_R2_reads.fq
+
+
+#################################################################################################
+
+In order to run Amber, I did the following:
+
+Found the gold standard binning file cami2_mouse_gut_gsa_pooled.binning at https://zenodo.org/record/3632511#.YG9MoXdKj-Y
+
+I then renamed it to a .txt file:
+cami2_mouse_gut_gsa_pooled.txt
+
+####I just wanted to see the file so that's why I changed it to .txt, but for running AMBER must be in the .binning format!
+
+Need to generate the following for all of the additional runs:
+
+@@SEQUENCEID BINID      
+
+I read in the files that I created that lists the contigs and the bin that they are in into R, I renamed the columns as @@SEQUENCEID BINID 
+and then saved it as a .txt file. I opened the file in Word Wrangler, removed the "" values, added the @VERSION: and @SAMPLE: header
+
+@VERSION:0.9.1
+@SampleID:gsa_pooled
+
+and then finally saved it as a .binning file
+
+################################################################################################
+
+#!/bin/bash
+#SBATCH --cpus-per-task=24
+#SBATCH --mail-type=BEGIN,END,FAIL,REQUEUE
+#SBATCH --mail-user="hmbucklin@wustl.edu"
+#SBATCH --mem=100G
+
+#I have the package downloaded in env in the following folder: /HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER/env
+
+#export PATH=$PATH:/HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER/env/bin
+
+module load python/3.7.9
+
+. env/bin/activate
+
+export PATH=$PATH:/HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER/env/bin >> ~/.bashrc
+
+source ~/.bashrc
+
+amber.py -g cami2_mouse_gut_gsa_pooled.binning \
+-l "METABAT_Kallisto, METABAT_Bowtie" \
+/HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER/MetaBAT_kallisto_bining.binning \
+/HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER/MetaBAT_bowtie_bining.binning \
+-o /HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER/AMBER_results_redo
+
+
+*****It seems like every time you want to run this it needs to be re-made into a new folder?
+
+module load python/3.7.9
+module load py-pip/19.0.3-python-3.7.9
+
+# create a virtual environment called "env" in current directory
+
+python3 -m venv --without-pip env
+
+# "activate" virtual environment
+
+. env/bin/activate
+
+# install amber
+
+pip3 install cami-amber
+
+
+Then to use amber:
+
+​module load python/3.7.9
+
+. env/bin/activate
+
+amber.py
+
+####################################################################################################
+
+#Header of the concoct table:
+
+contig	cov_mean_sample_sample_0_nodup	cov_mean_sample_sample_10_nodup	cov_mean_sample_sample_11_nodup	
+
+Kallisto completed for mapping the reads to the pieces of the contigs:
+
+
+for i in {0..63}
+do
+
+SAMPLE_NAME=sample_"${i}"
+echo $SAMPLE_NAME
+
+rsync /HL_working_folder/03292021_abundances_for_anonymous_contigs/kallisto_for_concoct/"${SAMPLE_NAME}"/abundance.tsv /HL_working_folder/03292021_abundances_for_anonymous_contigs/kallisto_for_concoct/all_files_for_coverage/"${SAMPLE_NAME}"_abundance.tsv
+
+done
+
+
+for i in {0..63}
+do
+
+SAMPLE_NAME=sample_"${i}"
+echo $SAMPLE_NAME
+
+rsync /HL_working_folder/03292021_abundances_for_anonymous_contigs/kallisto_for_concoct/"${SAMPLE_NAME}"/abundance.h5 /HL_working_folder/03292021_abundances_for_anonymous_contigs/kallisto_for_concoct/all_files_for_coverage/"${SAMPLE_NAME}"_abundance.h5
+
+done
+
+#I then need to run the R script that will generate the contig abundance file:
+
+cov_mean_sample
+
+###############################################################################################################
+
+library(progress)
+library(rhdf5)
+library(matrixStats)
+library(dplyr)
+library(tibble)
+
+setwd("/HL_working_folder/03292021_abundances_for_anonymous_contigs/kallisto_for_concoct/all_files_for_coverage")
+
+tpm <- function(counts, effLen) {
+  rate <- log(counts) - log(effLen)
+  denom <- log(sum(exp(rate)))
+  exp(rate - denom + log(1E6))
+}
+
+#subgroup_file <- read.table("subgroup_file.txt", sep = "\t")
+#colnames(subgroup_file) <- c("SID", "PID")
+
+#participants <- c("sample_0", "sample_1", "sample_2", "sample_3", "sample_4", "sample_5", "sample_6", "sample_7", "sample_8", "sample_9")
+
+#pb <- progress_bar$new(format = "[:bar] :current/:total (:percent) :eta", total = 952)
+#for (i in 1:length(participants)) {
+
+files <- list.files(".", "*.h5", full.names = TRUE, recursive = TRUE)
+
+SID_array <- NA
+
+res <- data.frame()
+
+for (j in 1:length(files)) {
+  #    pb$tick()
+  SID <- gsub(".h5$", "", basename(files[j]))
+  if (is.na(SID_array[1])) {
+     SID_array <- SID
+  } else {
+    SID_array <- c(SID_array, SID)
+  }
+  boot_array <- h5read(files[j], "bootstrap")
+  df_boot <- data.frame(contigName = h5read(files[j], "aux/ids"),
+                        contigLen = h5read(files[j], "/aux/lengths"),
+                        contigEffLen = h5read(files[j], "/aux/eff_lengths"))
+
+  if (length(res) == 0) {
+    res <- df_boot %>%
+      select(-contigEffLen)
+  }
+
+  for (k in 1:length(boot_array)) {
+    df_boot <- df_boot %>%
+      bind_cols(data.frame(tpm(boot_array[[k]], df_boot$contigEffLen)))
+    #%>% rename_with(function(x) paste0("bs", k - 1)))
+    colnames(df_boot)[k+3] <- paste0("bs", k-1)
+  }
+
+  res_kallisto <- read.table(list.files(".", paste0(SID, ".tsv"), full.names = TRUE, recursive = TRUE), sep = "\t", header = TRUE)
+
+  if (!all(df_boot$contigName == res_kallisto$target_id)) {
+    stop()
+  }
+  res_sub <- data.frame(ab = res_kallisto$tpm,
+                        #                          mean_boot = rowMeans(df_boot %>% select(-contigName, -contigLen, -contigEffLen)),
+                        #var = rowVars(as.matrix(df_boot %>% select(-contigName, -contigLen, -contigEffLen))),
+                        contigName = df_boot$contigName,
+                        contigLen = df_boot$contigLen)
+  colnames(res_sub)[colnames(res_sub) == "ab"] <- paste0("cov_mean_sample_",SID)
+  #colnames(res_sub)[colnames(res_sub) == "var"] <- paste0(SID, "-var")
+
+  res <- res %>%
+    full_join(res_sub, by = c("contigName", "contigLen"))
+
+}
+#all_depths <- res %>%
+#  select(all_of(SID_array))
+#totalAvgDepth <- rowSums(all_depths)
+res_final <- res #add_column(res, totalAvgDepth, .after="contigLen")
+
+res_final$contigLen <- NULL
+#res_final$totalAvgDepth <- NULL
+colnames(res_final)[1] <- c("contig")
+
+write.table(res_final, paste0("CAMI_mouse_to_anonymous_contigs_kallisto_concoct.tsv"), sep = "\t", quote = F, row.names = F)
+
+
+########################################################################################################################################
+
+
+#!/bin/bash
+#SBATCH --cpus-per-task=24
+#SBATCH --mail-type=BEGIN,END,FAIL,REQUEUE
+#SBATCH --mail-user="hmbucklin@wustl.edu"
+#SBATCH --mem=150G
+
+export PATH=$PATH:/home/hmbucklin/.conda/envs/concoct_env/bin/
+
+mkdir -p concoct_kallisto_output
+
+#concoct_coverage_table.py contigs_10K.bed /HL_working_folder/03292021_abundances_for_anonymous_contigs/bowtie_counts/sample_*_nodup.bam > coverage_table.tsv
+concoct --composition_file contigs_10K.fa --coverage_file CAMI_mouse_to_anonymous_contigs_kallisto_concoct.tsv -b concoct_kallisto_output/
+merge_cutup_clustering.py concoct_kallisto_output/clustering_gt1000.csv > concoct_kallisto_output/clustering_kallisto_merged.csv
+
+#Completed! Made .binning files as described above, and now going to make new files:
+
+###########################################################################################################################################
+
+
+/HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER_results_metabat_concoct
+
+Going to sync in cami2_mouse_gut_gsa_pooled.binning to new folder /HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER_results_metabat_concoct
+
+#!/bin/bash
+#SBATCH --cpus-per-task=24
+#SBATCH --mail-type=BEGIN,END,FAIL,REQUEUE
+#SBATCH --mail-user="hmbucklin@wustl.edu"
+#SBATCH --mem=100G
+
+
+#export PATH=$PATH:/HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER/env/bin
+
+module load python/3.7.9
+
+. env/bin/activate
+
+export PATH=$PATH:/HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER/env/bin >> ~/.bashrc
+
+source ~/.bashrc
+
+amber.py -g /HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER/cami2_mouse_gut_gsa_pooled.binning \
+-l "CONCOCT_Kallisto, CONCOCT_Bowtie, METABAT2_Kallisto, METABAT2_Bowtie" \
+/HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER/CONCOCT_kallisto_bining.binning \
+/HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER/CONCOCT_bowtie_bining.binning \
+/HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER/MetaBAT_kallisto_bining.binning \
+/HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER/MetaBAT_bowtie_bining.binning \
+-o /HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER_results_metabat_concoct
+
+
+#######################################################################################################################################
+
+First, make a file that has MAG,contig as the header:
+echo MAG,contig > contigs_in_MAGs_bowtie.csv
+
+Then, make the for loop to add contigs to the file:
+
+for i in {001..723}
+do
+
+echo $i
+
+MAG=MaxBin_kallisto."${i}".fasta
+
+grep ">" $MAG | sed 's/[>,]//g'| sed "s/^/$MAG,/"  >> Maxbin_contigs_in_MAGs_kallisto.csv
+
+done
+
+#####################################################################################################################################
+
+Unfortunately the files with Maxbin in Bowtie all got just named ".#.fasta" rather than having an actual name
+
+I was able to find them by typing "ls -a"
+
+I need to rename them now 
+
+find /HL_working_folder/03292021_abundances_for_anonymous_contigs/bowtie_counts/MaxBin_bowtie -depth -name ".*" -execdir rename -n 's|/\.|/|' {} +
+
+find /HL_working_folder/03292021_abundances_for_anonymous_contigs/bowtie_counts/MaxBin_bowtie -depth -name ".*" -execdir rename 's|/\.|/|' {} +
+
+This worked! NOTE: do NOT have a / after the MaxBin output- that isn't denoting the directory, it is denoting the prefix for the samples!
+
+for i in {001..780}
+do
+
+echo $i
+
+MAG="${i}".fasta
+
+grep ">" $MAG | sed 's/[>,]//g'| sed "s/^/$MAG,/"  >> Maxbin_contigs_in_MAGs_bowtie.csv
+
+done
+
+
+Now read both MaxBin tables into R, changed the headers to "BINID", "@@SEQUENCEID" (in correct order), then read into Word wrangler and removed the ""
+
+###################################################################################################################################
+
+MaxBin2_bowtie_bining.binning
+MaxBin2_kallisto_bining.binning
+
+Making a new folder: /HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER_MetaBAT_MaxBin_CONCOCT
+Set it up so that AMBER is in it:
+
+module load python/3.7.9
+module load py-pip/19.0.3-python-3.7.9
+
+# create a virtual environment called "env" in current directory
+
+python3 -m venv --without-pip env
+
+# "activate" virtual environment
+
+. env/bin/activate
+
+# install amber
+
+pip3 install cami-amber
+
+
+
+#!/bin/bash
+#SBATCH --cpus-per-task=24
+#SBATCH --mail-type=BEGIN,END,FAIL,REQUEUE
+#SBATCH --mail-user="hmbucklin@wustl.edu"
+#SBATCH --mem=100G
+
+
+module load python/3.7.9
+
+. env/bin/activate
+
+export PATH=$PATH:/HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER_MetaBAT_MaxBin_CONCOCT/env/bin >> ~/.bashrc
+
+source ~/.bashrc
+
+amber.py -g /HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER/cami2_mouse_gut_gsa_pooled.binning \
+-l "METABAT2_Kallisto, METABAT2_Bowtie, MaxBin2_Kallisto, MaxBin2_Bowtie, CONCOCT_Kallisto, CONCOCT_Bowtie" \
+/HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER/MetaBAT_kallisto_bining.binning \
+/HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER/MetaBAT_bowtie_bining.binning \
+/HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER/MaxBin2_kallisto_bining.binning \
+/HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER/MaxBin2_bowtie_bining.binning \
+/HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER/CONCOCT_kallisto_bining.binning \
+/HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER/CONCOCT_bowtie_bining.binning \
+-o /HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER_MetaBAT_MaxBin_CONCOCT
+
+
+#######################################################################################################
+
+mkdir concoct_output/fasta_bins
+extract_fasta_bins.py original_contigs.fa concoct_output/clustering_merged.csv --output_path concoct_output/fasta_bins
+
+
+Now going to run DASTool on the output of all of the bins for Kallisto and for Bowtie:
+
+
+
+#!/bin/bash
+#SBATCH --mem=50G
+#SBATCH --cpus-per-task=12
+#SBATCH --mail-type=BEGIN,END,FAIL,REQUEUE
+#SBATCH --mail-user="hmbucklin@wustl.edu"
+
+ml das_tool/1.1.2
+
+rsync /HL_working_folder/03292021_abundances_for_anonymous_contigs/Fasta_to_Scaffolds2Bin.sh /HL_working_folder/03292021_abundances_for_anonymous_contigs/bowtie_counts/MaxBin_bowtie/
+
+./Fasta_to_Scaffolds2Bin.sh \
+-i /HL_working_folder/03292021_abundances_for_anonymous_contigs/bowtie_counts/MaxBin_bowtie \
+-e "fasta" \
+> /HL_working_folder/03292021_abundances_for_anonymous_contigs/bowtie_counts/MaxBin_bowtie/bowtie_maxbin_bins_scaffolds2bin.tsv
+
+
+#!/bin/bash
+#SBATCH --mem=50G
+#SBATCH --cpus-per-task=12
+#SBATCH --mail-type=BEGIN,END,FAIL,REQUEUE
+#SBATCH --mail-user="hmbucklin@wustl.edu"
+
+ml das_tool/1.1.2
+
+rsync /HL_working_folder/03292021_abundances_for_anonymous_contigs/Fasta_to_Scaffolds2Bin.sh /HL_working_folder/03292021_abundances_for_anonymous_contigs/bowtie_counts/MetaBAT_bowtie/
+
+./Fasta_to_Scaffolds2Bin.sh \
+-i /HL_working_folder/03292021_abundances_for_anonymous_contigs/bowtie_counts/MetaBAT_bowtie \
+-e "fa" \
+> /HL_working_folder/03292021_abundances_for_anonymous_contigs/bowtie_counts/MetaBAT_bowtie/bowtie_metabat_bins_scaffolds2bin.tsv
+
+#!/bin/bash
+#SBATCH --mem=50G
+#SBATCH --cpus-per-task=12
+#SBATCH --mail-type=BEGIN,END,FAIL,REQUEUE
+#SBATCH --mail-user="hmbucklin@wustl.edu"
+
+ml das_tool/1.1.2
+
+rsync /HL_working_folder/03292021_abundances_for_anonymous_contigs/Fasta_to_Scaffolds2Bin.sh /HL_working_folder/03292021_abundances_for_anonymous_contigs/bowtie_counts/MetaBAT_bowtie/
+
+./Fasta_to_Scaffolds2Bin.sh \
+-i /HL_working_folder/03292021_abundances_for_anonymous_contigs/all_samples_h5_from_kallisto/MaxBin_kallisto \
+-e "fasta" \
+> /HL_working_folder/03292021_abundances_for_anonymous_contigs/all_samples_h5_from_kallisto/MaxBin_kallisto/kallisto_maxbin_bins_scaffolds2bin.tsv
+
+
+#!/bin/bash
+#SBATCH --mem=50G
+#SBATCH --cpus-per-task=12
+#SBATCH --mail-type=BEGIN,END,FAIL,REQUEUE
+#SBATCH --mail-user="hmbucklin@wustl.edu"
+
+ml das_tool/1.1.2
+
+rsync /HL_working_folder/03292021_abundances_for_anonymous_contigs/Fasta_to_Scaffolds2Bin.sh /HL_working_folder/03292021_abundances_for_anonymous_contigs/all_samples_h5_from_kallisto/MetaBAT_kallisto/
+
+./Fasta_to_Scaffolds2Bin.sh \
+-i /HL_working_folder/03292021_abundances_for_anonymous_contigs/all_samples_h5_from_kallisto/MetaBAT_kallisto \
+-e "fa" \
+> /HL_working_folder/03292021_abundances_for_anonymous_contigs/all_samples_h5_from_kallisto/MetaBAT_kallisto/kallisto_metabat_bins_scaffolds2bin.tsv
+
+
+
+#I made the CONCOCT file in R since the output of the merged_clustering.csv file already had all of the information needed for this!
+
+Next, I made two folders: DASTool_bowtie and DASTool_kallisto
+
+rsync /HL_working_folder/03292021_abundances_for_anonymous_contigs/kallisto_for_concoct/all_files_for_coverage/concoct_kallisto_output/concoct_kallisto_contigs_to_scaffolds.tsv /HL_working_folder/03292021_abundances_for_anonymous_contigs/DASTool_kallisto/
+rsync /HL_working_folder/03292021_abundances_for_anonymous_contigs/all_samples_h5_from_kallisto/MaxBin_kallisto/kallisto_maxbin_bins_scaffolds2bin.tsv /HL_working_folder/03292021_abundances_for_anonymous_contigs/DASTool_kallisto/
+rsync /HL_working_folder/03292021_abundances_for_anonymous_contigs/all_samples_h5_from_kallisto/MetaBAT_kallisto/kallisto_metabat_bins_scaffolds2bin.tsv /HL_working_folder/03292021_abundances_for_anonymous_contigs/DASTool_kallisto/
+
+
+#!/bin/bash
+#SBATCH --mem=100G
+#SBATCH --cpus-per-task=12
+#SBATCH --mail-type=END,FAIL,REQUEUE
+#SBATCH --mail-user="hmbucklin@wustl.edu"
+
+export PATH=$PATH:/HL_working_folder/DASTool/1.1.2
+
+#ml das_tool/1.1.2
+ml usearch/10.0.240
+ml R/3.6.1
+ml ruby/2.6.2
+ml pullseq/1.0.2
+ml prodigal/2.6.3
+
+DAS_Tool -i concoct_kallisto_contigs_to_scaffolds.tsv,kallisto_maxbin_bins_scaffolds2bin.tsv,kallisto_metabat_bins_scaffolds2bin.tsv -l CONCOCT,MaxBin2,MetaBAT2 -c /HL_working_folder/03292021_abundances_for_anonymous_contigs/anonymous_gsa_pooled.fasta -o kallisto_maxbin_metabat_concoct --write_bins 1
+
+
+rsync /HL_working_folder/03292021_abundances_for_anonymous_contigs/bowtie_counts/MetaBAT_bowtie/bowtie_metabat_bins_scaffolds2bin.tsv /HL_working_folder/03292021_abundances_for_anonymous_contigs/DASTool_bowtie/
+rsync /HL_working_folder/03292021_abundances_for_anonymous_contigs/bowtie_counts/MaxBin_bowtie/bowtie_maxbin_bins_scaffolds2bin.tsv /HL_working_folder/03292021_abundances_for_anonymous_contigs/DASTool_bowtie/
+rsync /HL_working_folder/03292021_abundances_for_anonymous_contigs/bowtie_counts/concoct_bowtie_output/concoct_bowtie_contigs_to_scaffolds.tsv /HL_working_folder/03292021_abundances_for_anonymous_contigs/DASTool_bowtie/
+
+#!/bin/bash
+#SBATCH --mem=100G
+#SBATCH --cpus-per-task=12
+#SBATCH --mail-type=END,FAIL,REQUEUE
+#SBATCH --mail-user="hmbucklin@wustl.edu"
+
+export PATH=$PATH:/HL_working_folder/DASTool/1.1.2
+
+#ml das_tool/1.1.2
+ml usearch/10.0.240
+ml R/3.6.1
+ml ruby/2.6.2
+ml pullseq/1.0.2
+ml prodigal/2.6.3
+
+DAS_Tool -i bowtie_metabat_bins_scaffolds2bin.tsv,bowtie_maxbin_bins_scaffolds2bin.tsv,concoct_bowtie_contigs_to_scaffolds.tsv -l MetaBAT2,MaxBin2,CONCOCT -c /HL_working_folder/03292021_abundances_for_anonymous_contigs/anonymous_gsa_pooled.fasta -o bowtie_maxbin_metabat_concoct --write_bins 1
+
+
+#################################################################################################
+
+
+For some reason the sbatch scripts above both said that they both failed- this happened when dealing w the prePOC MAGs as well and I think it may have to 
+do with the fact that more than one was running at once. I removed all files from the folder and will start over running first Bowtie then KAllisto
+
+
+
+Downloaded QUAST: http://quast.sourceforge.net/docs/manual.html
+
+wget https://downloads.sourceforge.net/project/quast/quast-5.0.2.tar.gz
+    tar -xzf quast-5.0.2.tar.gz
+    cd quast-5.0.2
+
+#########################################################################################################################
+
+#Going to try this in a new folder under an interactive session:
+
+export PATH=$PATH:/HL_working_folder/DASTool/1.1.2
+export PATH=$PATH:/HL_working_folder/ruby/ruby-2.6.2
+#ml das_tool/1.1.2
+ml usearch/10.0.240
+#ml usearch/11.0.667
+ml R/3.6.1
+#ml ruby/2.6.2
+ml pullseq/1.0.2
+ml prodigal/2.6.3
+
+DAS_Tool -i concoct_kallisto_contigs_to_scaffolds.tsv,kallisto_maxbin_bins_scaffolds2bin.tsv,kallisto_metabat_bins_scaffolds2bin.tsv -l CONCOCT,MaxBin2,MetaBAT2 -c /HL_working_folder/03292021_abundances_for_anonymous_contigs/anonymous_gsa_pooled.fasta -o kallisto_maxbin_metabat_concoct --write_bins 1
+
+[detached from 21043.pts-3.htcf]
+
+
+export PATH=$PATH:/HL_working_folder/DASTool/1.1.2
+export PATH=$PATH:/HL_working_folder/ruby/ruby-2.6.2
+#ml das_tool/1.1.2
+ml usearch/10.0.240
+#ml usearch/11.0.667
+ml R/3.6.1
+#ml ruby/2.6.2
+ml pullseq/1.0.2
+ml prodigal/2.6.3
+
+DAS_Tool -i bowtie_metabat_bins_scaffolds2bin.tsv,bowtie_maxbin_bins_scaffolds2bin.tsv,concoct_bowtie_contigs_to_scaffolds.tsv \
+-l MetaBAT2,MaxBin2,CONCOCT \
+-c /HL_working_folder/03292021_abundances_for_anonymous_contigs/anonymous_gsa_pooled.fasta \
+-o bowtie_maxbin_metabat_concoct \
+--write_bins 1
+
+[detached from 20953.pts-3.htcf]
+
+
+
+diamond/0.9.34-python-3.6.5 
+blast-plus/2.9.0-python-3.6.5
+###############################################################################################################
+
+
+export PATH=$PATH:/HL_working_folder/DASTool/1.1.2
+
+ml R/3.6.1
+ml ruby/2.6.2
+ml pullseq/1.0.2
+ml prodigal/2.6.3
+ml diamond/0.9.34-python-3.6.5
+ml blast-plus/2.9.0-python-3.6.5
+
+DAS_Tool -i bowtie_metabat_bins_scaffolds2bin.tsv,bowtie_maxbin_bins_scaffolds2bin.tsv,concoct_bowtie_contigs_to_scaffolds.tsv \
+-l MetaBAT2,MaxBin2,CONCOCT \
+-c /HL_working_folder/03292021_abundances_for_anonymous_contigs/anonymous_gsa_pooled.fasta \
+-o bowtie_maxbin_metabat_concoct \
+--write_bins 1 \
+--search_engine diamond
+
+
+[detached from 22265.pts-3.htcf]
+
+###############################################################################################################
+
+export PATH=$PATH:/HL_working_folder/DASTool/1.1.2
+
+ml R/3.6.1
+ml ruby/2.6.2
+ml pullseq/1.0.2
+ml prodigal/2.6.3
+ml diamond/0.9.34-python-3.6.5
+ml blast-plus/2.9.0-python-3.6.5
+
+DAS_Tool \
+-i concoct_kallisto_contigs_to_scaffolds.tsv,kallisto_maxbin_bins_scaffolds2bin.tsv,kallisto_metabat_bins_scaffolds2bin.tsv \
+-l CONCOCT,MaxBin2,MetaBAT2 \
+-c /HL_working_folder/03292021_abundances_for_anonymous_contigs/anonymous_gsa_pooled.fasta \
+-o kallisto_maxbin_metabat_concoct \
+--write_bins 1 \
+--search_engine diamond
+
+
+[detached from 22398.pts-3.htcf]
+
+All of these scripts are still failing again:
+
+I decided to re-download DASTool again, and this time on the website it gives instructions for updating the scg database:
+
+unzip ./db.zip -d db
+
+Then I remade some scripts going to this location:
+
+#!/bin/bash
+#SBATCH --mem=250G
+#SBATCH --cpus-per-task=12
+#SBATCH --mail-type=END,FAIL,REQUEUE
+#SBATCH --mail-user="hmbucklin@wustl.edu"
+
+export PATH=$PATH:/HL_working_folder/DASTool_trial/1.1.2
+export PATH=$PATH:/HL_working_folder/ruby/ruby-2.6.2
+#export PATH=$PATH:/HL_working_folder/usearch
+#ml das_tool/1.1.2
+#ml usearch/10.0.240
+ml usearch/11.0.667
+ml R/3.6.1
+#ml ruby/2.6.2
+ml pullseq/1.0.2
+ml prodigal/2.6.3
+
+DAS_Tool -i concoct_kallisto_contigs_to_scaffolds.tsv,kallisto_maxbin_bins_scaffolds2bin.tsv,kallisto_metabat_bins_scaffolds2bin.tsv -l CONCOCT,MaxBin2,MetaBAT2 -c /HL_working_folder/03292021_abundances_for_anonymous_contigs/anonymous_gsa_pooled.fasta -o kallisto_maxbin_metabat_concoct --write_bins 1
+
+Submitted batch job 30367613
+
+#!/bin/bash
+#SBATCH --mem=250G
+#SBATCH --cpus-per-task=12
+#SBATCH --mail-type=END,FAIL,REQUEUE
+#SBATCH --mail-user="hmbucklin@wustl.edu"
+
+export PATH=$PATH:/HL_working_folder/DASTool_trial/1.1.2
+
+#ml das_tool/1.1.2
+#ml usearch/10.0.240
+ml usearch/11.0.667
+ml R/3.6.1
+ml ruby/2.6.2
+ml pullseq/1.0.2
+ml prodigal/2.6.3
+
+DAS_Tool -i bowtie_metabat_bins_scaffolds2bin.tsv,bowtie_maxbin_bins_scaffolds2bin.tsv,concoct_bowtie_contigs_to_scaffolds.tsv \
+-l MetaBAT2,MaxBin2,CONCOCT \
+-c /HL_working_folder/03292021_abundances_for_anonymous_contigs/anonymous_gsa_pooled.fasta \
+-o bowtie_maxbin_metabat_concoct \
+--write_bins 1
+
+slurm:  30366864
+
+#########################################################################################################
+
+Will actually try as an interactive since taking too long:
+
+export PATH=$PATH:/HL_working_folder/DASTool_trial/1.1.2
+export PATH=$PATH:/HL_working_folder/ruby/ruby-2.6.2
+
+ml usearch/11.0.667
+ml R/3.6.1
+ml pullseq/1.0.2
+ml prodigal/2.6.3
+
+DAS_Tool -i concoct_kallisto_contigs_to_scaffolds.tsv,kallisto_maxbin_bins_scaffolds2bin.tsv,kallisto_metabat_bins_scaffolds2bin.tsv -l CONCOCT,MaxBin2,MetaBAT2 -c /HL_working_folder/03292021_abundances_for_anonymous_contigs/anonymous_gsa_pooled.fasta -o kallisto_maxbin_metabat_concoct --write_bins 1
+
+[detached from 5406.pts-89.htcf]
+
+
+export PATH=$PATH:/HL_working_folder/DASTool_trial/1.1.2
+export PATH=$PATH:/HL_working_folder/ruby/ruby-2.6.2
+
+ml usearch/11.0.667
+ml R/3.6.1
+ml pullseq/1.0.2
+ml prodigal/2.6.3
+
+DAS_Tool -i bowtie_metabat_bins_scaffolds2bin.tsv,bowtie_maxbin_bins_scaffolds2bin.tsv,concoct_bowtie_contigs_to_scaffolds.tsv \
+-l MetaBAT2,MaxBin2,CONCOCT \
+-c /HL_working_folder/03292021_abundances_for_anonymous_contigs/anonymous_gsa_pooled.fasta \
+-o bowtie_maxbin_metabat_concoct \
+--write_bins 1
+
+[detached from 5582.pts-89.htcf]
+
+
+This time I have re-loaded DASTool with the specific instructions to unzip the db and then create the link to usearch:
+ln -s /HL_working_folder/usearch/usearch10.0.240_i86linux32 usearch
+
+#!/bin/bash
+#SBATCH --mem=100G
+#SBATCH --cpus-per-task=12
+#SBATCH --mail-type=END,FAIL,REQUEUE
+#SBATCH --mail-user="hmbucklin@wustl.edu"
+
+export PATH=$PATH:/HL_working_folder/DASTool_trial/1.1.2
+export PATH=$PATH:/HL_working_folder/ruby/ruby-2.6.2
+export PATH=$PATH:/HL_working_folder/03292021_abundances_for_anonymous_contigs/DASTool_new_kallisto/usearch
+
+#export PATH=$PATH:/HL_working_folder/usearch
+#ml das_tool/1.1.2
+#ml usearch/10.0.240
+#ml usearch/11.0.667
+ml R/3.6.1
+#ml ruby/2.6.2
+ml pullseq/1.0.2
+ml prodigal/2.6.3
+ml diamond/0.9.34-python-3.6.5
+
+DAS_Tool \
+-i concoct_kallisto_contigs_to_scaffolds.tsv,kallisto_maxbin_bins_scaffolds2bin.tsv,kallisto_metabat_bins_scaffolds2bin.tsv \
+-l CONCOCT,MaxBin2,MetaBAT2 \
+-c /HL_working_folder/03292021_abundances_for_anonymous_contigs/anonymous_gsa_pooled.fasta \
+-o kallisto_maxbin_metabat_concoct \
+--write_bins 1 \
+--search_engine diamond
+
+
+slurm-30379636.out
+
+FINALLY! This finished- note for in the future, MUST unzip the db, add the soft link for the usearch, and use diamond for large datasets!!!
+Total of 672 bins
+Now going to run below:
+
+
+#!/bin/bash
+#SBATCH --mem=100G
+#SBATCH --cpus-per-task=12
+#SBATCH --mail-type=END,FAIL,REQUEUE
+#SBATCH --mail-user="hmbucklin@wustl.edu"
+
+export PATH=$PATH:/HL_working_folder/DASTool_trial/1.1.2
+export PATH=$PATH:/HL_working_folder/ruby/ruby-2.6.2
+export PATH=$PATH:/HL_working_folder/03292021_abundances_for_anonymous_contigs/DASTool_new_kallisto/usearch
+
+#export PATH=$PATH:/HL_working_folder/usearch
+#ml das_tool/1.1.2
+#ml usearch/10.0.240
+#ml usearch/11.0.667
+ml R/3.6.1
+#ml ruby/2.6.2
+ml pullseq/1.0.2
+ml prodigal/2.6.3
+ml diamond/0.9.34-python-3.6.5
+
+DAS_Tool -i bowtie_metabat_bins_scaffolds2bin.tsv,bowtie_maxbin_bins_scaffolds2bin.tsv,concoct_bowtie_contigs_to_scaffolds.tsv \
+-l MetaBAT2,MaxBin2,CONCOCT \
+-c /HL_working_folder/03292021_abundances_for_anonymous_contigs/anonymous_gsa_pooled.fasta \
+-o bowtie_maxbin_metabat_concoct \
+--write_bins 1 \
+--search_engine diamond
+
+Will hold off on running this until the Kallisto script is done since DASTool seems to give me an issue w more than one thing running at once
+
+
+./DAS_Tool/src/scg_blank_diamond.rb diamond S13/annotation/predicted_genes/S13.faa DAS_Tool/db/bac.all.faa DAS_Tool/db/bac.scg.faa DAS_Tool/db/bac.scg.lookup 1
+
+
+##############################################################################################################
+
+
+for i in {1..672}
+do 
+echo $i
+	
+MAG=$( sed -ne '/^#/!p' "DAStool_kallisto_bin_names.csv" | sed -n "${i}"p )
+
+grep ">" $MAG | sed 's/[>,]//g'| sed "s/^/$MAG,/"  >> DASTool_contigs_in_MAGs_kallisto.csv
+
+done
+
+##############################################################################################################
+
+for i in {1..541}
+do 
+echo $i
+	
+MAG=$( sed -ne '/^#/!p' "DASTool_bowtie_names.csv" | sed -n "${i}"p )
+
+grep ">" $MAG | sed 's/[>,]//g'| sed "s/^/$MAG,/"  >> DASTool_contigs_in_MAGs_bowtie.csv
+
+done
+
+
+#################################################################################################################
+
+
+#Creating a folder to use when DASTool finishes up:
+
+module load python/3.7.9
+module load py-pip/19.0.3-python-3.7.9
+
+# create a virtual environment called "env" in current directory
+
+python3 -m venv --without-pip env
+
+# "activate" virtual environment
+
+. env/bin/activate
+
+# install amber
+
+pip3 install cami-amber
+
+
+#################################################################################################################
+
+
+#!/bin/bash
+#SBATCH --cpus-per-task=24
+#SBATCH --mail-type=BEGIN,END,FAIL,REQUEUE
+#SBATCH --mail-user="hmbucklin@wustl.edu"
+#SBATCH --mem=100G
+
+
+module load python/3.7.9
+
+. env/bin/activate
+
+export PATH=$PATH:/HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER_MetaBAT_MaxBin_CONCOCT/env/bin >> ~/.bashrc
+
+source ~/.bashrc
+
+amber.py -g /HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER/cami2_mouse_gut_gsa_pooled.binning \
+-l "DASTool_Kallisto, METABAT2_Kallisto, METABAT2_Bowtie, MaxBin2_Kallisto, MaxBin2_Bowtie, CONCOCT_Kallisto, CONCOCT_Bowtie" \
+/HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER/DASTool_kallisto_bining.binning \
+/HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER/MetaBAT_kallisto_bining.binning \
+/HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER/MetaBAT_bowtie_bining.binning \
+/HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER/MaxBin2_kallisto_bining.binning \
+/HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER/MaxBin2_bowtie_bining.binning \
+/HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER/CONCOCT_kallisto_bining.binning \
+/HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER/CONCOCT_bowtie_bining.binning \
+-o /HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER_including_DASTool
+
+#################################################################################################################
+
+
+#!/bin/bash
+#SBATCH --cpus-per-task=24
+#SBATCH --mail-type=BEGIN,END,FAIL,REQUEUE
+#SBATCH --mail-user="hmbucklin@wustl.edu"
+#SBATCH --mem=100G
+
+
+module load python/3.7.9
+
+. env/bin/activate
+
+export PATH=$PATH:/HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER_MetaBAT_MaxBin_CONCOCT/env/bin >> ~/.bashrc
+
+source ~/.bashrc
+
+amber.py -g /HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER/cami2_mouse_gut_gsa_pooled.binning \
+-l "DASTool_Kallisto, DASTool_Bowtie, METABAT2_Kallisto, METABAT2_Bowtie, MaxBin2_Kallisto, MaxBin2_Bowtie, CONCOCT_Kallisto, CONCOCT_Bowtie" \
+/HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER/DASTool_kallisto_bining.binning \
+/HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER/DASTool_bowtie_bining.binning \
+/HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER/MetaBAT_kallisto_bining.binning \
+/HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER/MetaBAT_bowtie_bining.binning \
+/HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER/MaxBin2_kallisto_bining.binning \
+/HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER/MaxBin2_bowtie_bining.binning \
+/HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER/CONCOCT_kallisto_bining.binning \
+/HL_working_folder/03292021_abundances_for_anonymous_contigs/AMBER/CONCOCT_bowtie_bining.binning \
+-o /HL_working_folder/03292021_abundances_for_anonymous_contigs/DASTool_all_methods
+
+
+rsync -avH --progress /HL_working_folder/03292021_abundances_for_anonymous_contigs /HL_working_folder_store/
+[detached from 15781.pts-54.htcf]
+
+
+
+
+

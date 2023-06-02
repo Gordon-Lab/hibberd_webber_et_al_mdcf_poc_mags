@@ -1,0 +1,285 @@
+#Binning contigs based on bowtie-calculated abundances 
+
+#################################################################################################
+
+#Generate Bowtie index for anonymous contigs
+
+#################################################################################################
+
+#!/bin/bash
+#SBATCH --mem=100G
+#SBATCH --cpus-per-task=12
+#SBATCH --mail-type=END,FAIL,REQUEUE
+
+#Reading in modules needed for the script
+ml bowtie2/2.3.4.1
+
+COUNTS_DIR="/HL_working_directory/03292021_abundances_for_anonymous_contigs/bowtie_counts"
+SAMPLE_NAME=sample_"${SLURM_ARRAY_TASK_ID}"
+
+mkdir -p /HL_working_directory/03292021_abundances_for_anonymous_contigs/bowtie_counts
+
+if [ -f /HL_working_directory/03292021_abundances_for_anonymous_contigs/anonymous_gsa_pooled.fasta ]; then
+
+        if [ ! -f /HL_working_directory/03292021_abundances_for_anonymous_contigs/anonymous_gsa_pooled.fasta.1.bt2 ]; then
+        bowtie2-build /HL_working_directory/03292021_abundances_for_anonymous_contigs/anonymous_gsa_pooled.fasta /HL_working_directory/03292021_abundances_for_anonymous_contigs/anonymous_gsa_pooled.fasta
+    fi
+fi
+
+##################################################################################################
+
+#Quantify contig abundances across samples with Bowtie
+
+##################################################################################################
+
+#!/bin/bash
+#SBATCH --mem=100G
+#SBATCH --cpus-per-task=12
+#SBATCH --mail-type=END,FAIL,REQUEUE
+#SBATCH --array=0-63
+
+#Reading in modules needed for the script
+ml bowtie2/2.3.4.1
+ml samtools/1.9
+ml bedtools/2.27.1
+ml subread/1.6.2
+
+   bowtie2 \
+        -p "${SLURM_CPUS_PER_TASK}" \
+        -1 /HL_working_directory/02092021_CAMI_mouse_data_resync/19122017_mousegut_scaffolds/2017.12.29_11.37.26_sample_"${SLURM_ARRAY_TASK_ID}"/reads/sample_"${SLURM_ARRAY_TASK_ID}"_R1_reads.fq \
+        -2 /HL_working_directory/02092021_CAMI_mouse_data_resync/19122017_mousegut_scaffolds/2017.12.29_11.37.26_sample_"${SLURM_ARRAY_TASK_ID}"/reads/sample_"${SLURM_ARRAY_TASK_ID}"_R2_reads.fq \
+        -x /HL_working_directory/03292021_abundances_for_anonymous_contigs/anonymous_gsa_pooled.fasta \
+        | samtools view --threads "${SLURM_CPUS_PER_TASK}" -huS - \
+        | samtools sort --threads "${SLURM_CPUS_PER_TASK}" -n - \
+        | samtools fixmate --threads "${SLURM_CPUS_PER_TASK}" -m - - \
+        | samtools sort --threads "${SLURM_CPUS_PER_TASK}" - \
+        | samtools markdup --threads "${SLURM_CPUS_PER_TASK}" -rs - "${COUNTS_DIR}/${SAMPLE_NAME}_nodup.bam"
+
+         #header would be "chromosome" "depth" "bases with depth > 2" "chromosome size" "fraction of bases on chromosome with depth = depth"    
+         
+         
+#################################################################################################
+
+#Generate contig depth table across all samples and then bin contigs using MetaBAT2
+
+#################################################################################################
+
+#!/bin/bash
+#SBATCH --mem=200G
+#SBATCH --cpus-per-task=12
+#SBATCH --mail-type=END,FAIL,REQUEUE
+
+./jgi_summarize_bam_contig_depths --outputDepth bowtie_to_anonymous_contigs_depth /HL_working_directory/03292021_abundances_for_anonymous_contigs/bowtie_counts/*.bam      
+
+ml metabat/2.12.1
+
+#Then, can run MetaBat2:
+
+metabat2 \
+-i /HL_working_directory/03292021_abundances_for_anonymous_contigs/anonymous_gsa_pooled.fasta \
+-a /HL_working_directory/03292021_abundances_for_anonymous_contigs/bowtie_counts/bowtie_to_anonymous_contigs_depth \
+-o /HL_working_directory/03292021_abundances_for_anonymous_contigs/bowtie_counts/MetaBAT \
+-v
+
+#################################################################################################
+
+#Generate list of contig depths for each sample (bowtie_depth_table_to_file.py)
+
+#################################################################################################
+#Code for bowtie_depth_table_to_file.py
+
+#!/usr/bin/env python3
+
+import sys
+import os
+import errno
+import argparse
+import hashlib
+import subprocess
+import shutil
+import re
+
+parser = argparse.ArgumentParser()
+parser.add_argument("-i", help="[STRING] Input depth file", dest="input", required=True)
+parser.add_argument("-p", help="[STRING] Output prefix", dest="prefix", default = ".")
+args = parser.parse_args()
+
+dat = dict()
+lines = open( args.input, 'r')
+first = True
+for line in lines:
+    stripline = line.strip()
+    splitline = stripline.split('\t')
+    if (first):
+        headers = splitline
+        for i,e in enumerate(headers):
+            if headers[i] == "contigName" or headers[i].endswith(".bam"):
+            dat[headers[i]] = []
+
+        first = False
+    else:
+        line_array = splitline
+        for i,e in enumerate(line_array):
+            if headers[i] == "contigName" or headers[i].endswith(".bam"):
+                dat[headers[i]].append(line_array[i])
+
+output_list = open(args.prefix + "/" + re.sub('\.depth', '', os.path.basename(args.input)) + ".depth_list", 'w')
+for key in dat:
+#    sys.stdout.write("{}\n".format(key))
+    if key != "contigName":
+        base = re.sub('_nodup\.bam', '', key)
+        outfile = args.prefix + "/" + base + ".depth"
+        output = open(outfile, 'w')
+        for i,e in enumerate(dat[key]):
+            output.write("{}\t{}\n".format(dat["contigName"][i], dat[key][i]))
+        output.close()
+        output_list.write("{}\n".format(outfile))
+
+output_list.close()
+
+#########################################################################################################################
+#Command to run bowtie_depth_table_to_file.py
+
+./bowtie_depth_table_to_file.py -i /HL_working_directory/03292021_abundances_for_anonymous_contigs/bowtie_counts/bowtie_to_anonymous_contigs_depth -p /HL_working_directory/03292021_abundances_for_anonymous_contigs/bowtie_counts
+
+
+################################################################################################
+
+#Bin contigs with MaxBin2
+
+################################################################################################
+
+#!/bin/bash
+#SBATCH --mem=250G
+#SBATCH --cpus-per-task=12
+#SBATCH --mail-type=START,END,FAIL,REQUEUE
+
+#ml maxbin/2.2.7
+ml perl/5.20.3
+ml perl-modules/5.20.3
+
+export PATH=$PATH:/HL_working_directory/MaxBin/2.2.7/
+
+perl /HL_working_directory/MaxBin/2.2.7/run_MaxBin.pl  \
+        -contig /HL_working_directory/03292021_abundances_for_anonymous_contigs/anonymous_gsa_pooled.fasta \
+        -out /HL_working_directory/03292021_abundances_for_anonymous_contigs/bowtie_counts/MaxBin_bowtie/ \
+        -abund_list /HL_working_directory/03292021_abundances_for_anonymous_contigs/bowtie_counts/bowtie_to_anonymous_contigs_depth.depth_list \
+        -thread 24
+        
+####################################################################################################################################
+      
+#Cut larger contigs into smaller pieces
+
+####################################################################################################################################
+
+cut_up_fasta.py /HL_working_directory/03292021_abundances_for_anonymous_contigs/anonymous_gsa_pooled.fasta -c 10000 -o 0 --merge_last -b contigs_10K.bed > contigs_10K.fa
+
+####################################################################################################################################
+
+#Generate bam file indices
+
+####################################################################################################################################
+
+#!/bin/bash
+#SBATCH --cpus-per-task=24
+#SBATCH --mail-type=BEGIN,END,FAIL,REQUEUE
+#SBATCH --mem=100G
+#SBATCH --array=0-63
+
+ml samtools/1.9
+
+samtools index /HL_working_directory/03292021_abundances_for_anonymous_contigs/bowtie_counts/sample_"${SLURM_ARRAY_TASK_ID}"_nodup.bam
+      
+####################################################################################################################################
+
+#Generate CONCOCT contig coverage table and bin contigs using CONCOCT
+      
+####################################################################################################################################      
+      
+#!/bin/bash
+#SBATCH --cpus-per-task=24
+#SBATCH --mail-type=BEGIN,END,FAIL,REQUEUE
+#SBATCH --mem=50G
+
+export PATH=$PATH:/HL_home_directory/.conda/envs/concoct_env/bin/
+
+concoct_coverage_table.py contigs_10K.bed /HL_working_directory/03292021_abundances_for_anonymous_contigs/bowtie_counts/sample_*_nodup.bam > coverage_table.tsv
+concoct --composition_file contigs_10K.fa --coverage_file coverage_table.tsv -b concoct_bowtie_output/
+merge_cutup_clustering.py concoct_bowtie_output/clustering_gt1000.csv > concoct_bowtie_output/clustering_merged.csv   
+
+####################################################################################################################################      
+
+Dereplicate binned contigs across methods with DASTool
+
+####################################################################################################################################      
+
+#First create the scaffolds2bin files
+
+################################################################################################################################
+
+#!/bin/bash
+#SBATCH --mem=50G
+#SBATCH --cpus-per-task=12
+#SBATCH --mail-type=BEGIN,END,FAIL,REQUEUE
+
+ml das_tool/1.1.2
+
+rsync /HL_working_directory/03292021_abundances_for_anonymous_contigs/Fasta_to_Scaffolds2Bin.sh /HL_working_directory/03292021_abundances_for_anonymous_contigs/bowtie_counts/MaxBin_bowtie/
+
+./Fasta_to_Scaffolds2Bin.sh \
+-i /HL_working_directory/03292021_abundances_for_anonymous_contigs/bowtie_counts/MaxBin_bowtie \
+-e "fasta" \
+> /HL_working_directory/03292021_abundances_for_anonymous_contigs/bowtie_counts/MaxBin_bowtie/bowtie_maxbin_bins_scaffolds2bin.tsv
+
+################################################################################################################################
+
+#!/bin/bash
+#SBATCH --mem=50G
+#SBATCH --cpus-per-task=12
+#SBATCH --mail-type=BEGIN,END,FAIL,REQUEUE
+
+ml das_tool/1.1.2
+
+rsync /HL_working_directory/03292021_abundances_for_anonymous_contigs/Fasta_to_Scaffolds2Bin.sh /HL_working_directory/03292021_abundances_for_anonymous_contigs/bowtie_counts/MetaBAT_bowtie/
+
+./Fasta_to_Scaffolds2Bin.sh \
+-i /HL_working_directory/03292021_abundances_for_anonymous_contigs/bowtie_counts/MetaBAT_bowtie \
+-e "fa" \
+> /HL_working_directory/03292021_abundances_for_anonymous_contigs/bowtie_counts/MetaBAT_bowtie/bowtie_metabat_bins_scaffolds2bin.tsv
+
+######################################################################################################################################
+
+#Obtained scaffolds2bin information for CONCOCT from clustering_merged.csv file
+
+######################################################################################################################################
+
+#Next, dereplicate bins across 3 methods with DASTool
+
+######################################################################################################################################
+
+#!/bin/bash
+#SBATCH --mem=100G
+#SBATCH --cpus-per-task=12
+#SBATCH --mail-type=END,FAIL,REQUEUE
+
+export PATH=$PATH:/HL_working_directory/DASTool_trial/1.1.2
+export PATH=$PATH:/HL_working_directory/ruby/ruby-2.6.2
+export PATH=$PATH:/HL_working_directory/03292021_abundances_for_anonymous_contigs/DASTool_new_kallisto/usearch
+
+#export PATH=$PATH:/HL_working_directory/usearch
+#ml das_tool/1.1.2
+#ml usearch/10.0.240
+#ml usearch/11.0.667
+ml R/3.6.1
+#ml ruby/2.6.2
+ml pullseq/1.0.2
+ml prodigal/2.6.3
+ml diamond/0.9.34-python-3.6.5
+
+DAS_Tool -i bowtie_metabat_bins_scaffolds2bin.tsv,bowtie_maxbin_bins_scaffolds2bin.tsv,concoct_bowtie_contigs_to_scaffolds.tsv \
+-l MetaBAT2,MaxBin2,CONCOCT \
+-c /HL_working_directory/03292021_abundances_for_anonymous_contigs/anonymous_gsa_pooled.fasta \
+-o bowtie_maxbin_metabat_concoct \
+--write_bins 1 \
+--search_engine diamond
+  

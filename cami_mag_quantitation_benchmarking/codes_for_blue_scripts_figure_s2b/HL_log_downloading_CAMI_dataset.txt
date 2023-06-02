@@ -1,0 +1,109 @@
+#Documentation for gathering the data:
+#Gathered by Hannah Lynn 11/25/2020
+
+#2nd CAMI Toy Mouse Gut Dataset
+
+#Data location: /HL_working_directory/CAMI_data
+
+#Go to this website: https://data.cami-challenge.org/participate
+#Go to the second tab all of the way down at the bottom, and at the bottom of the second page click on Description [+]
+#2nd CAMI Toy Mouse Gut Dataset
+
+#Downloaded files containing information about which taxa are used:
+mkdir taxonomy_files
+cd taxonomy_files
+wget https://openstack.cebitec.uni-bielefeld.de:8080/swift/v1/CAMI_DATABASES/taxdump_cami2_toy.tar.gz 
+#opening tar.gz file:
+tar -zxvf taxdump_cami2_toy.tar.gz 
+cd ..
+
+#Downloading cami java client tool to be able to download all of the data:
+wget https://data.cami-challenge.org/camiClient.jar
+
+#Downloaded the actual data: (option to download everything!)
+java -jar camiClient.jar -d https://openstack.cebitec.uni-bielefeld.de:8080/swift/v1/CAMISIM_MOUSEGUT . -p .
+
+##########################################################################################################################
+#Overview of dataset:
+
+#Data set description: Simulated metagenome data from the guts of different mice, vendors and positions in the gut
+#Underlying genome sources: NCBI RefSeq scaffolds, 18.1.2018
+#Underlying microbiome profile source: still unreleased
+#Taxonomy used: https://openstack.cebitec.uni-bielefeld.de:8080/swift/v1/CAMI_DATABASES/taxdump_cami2_toy.tar.gz
+
+#Sample descriptions: Simulated Illumina HiSeq metagenome data
+#Number of samples: 64 (12 different mice microbiota)
+#Total size: 320 Gbp
+#Read length: 2x150 bp
+#Insert size mean: 270 bp
+#Insert size s.d.: 20 bp
+
+#Sample descriptions: Simulated Pacific Bioscience metagenome data
+#Number of samples: 64 (12 different mice microbiota)
+#Total size: 320 Gbp
+#Average read length: 3,000 bp
+#Read length s.d.: 1,000 bp
+
+#Folder structure:
+
+#Metadata in human-readable/text format
+#sample folders start with the date of creation and end with the sample number:
+#yyyy.mm.dd_hh.mm.ss_sample_#
+
+#In every sample folder there are three subfolders, bam, contigs and reads:
+
+#The bam folder contains the mapping of all the created reads to the input genomes:
+#Inside this folder is a bam file for every genome for which at least one read was produced, 
+#which is uniquely indicated by a combination of OTU and a running ID counter for the number of genomes included in that OTU in the sample: OTU_ID.bam
+
+#The contigs folder contains the gold standard assembly for that particular sample
+#It contains two files, the gold standard in fasta format:
+#anonymous_gsa.fasta.gz
+#And the mapping for each contigs to its genome/taxon id and position in this genome:
+#gsa_mapping.tsv.gz
+
+#The reads folder contains the created reads for that sample:
+#It contains two files, one with the fq reads themselves, containing both ends for paired end sequencing and with anonymised names:
+#anonymous_reads.fq.gz
+#And the second one is a mapping of every single read to the genome it originated from and the original read ID (pre anonymisation)
+#reads_mapping.tsv.gz
+
+#every data set contains one abundance file per sample mapping OTUs to genomes:
+#abundance#.tsv
+
+#every data set contains the pooled gold standard assembly over all samples in the folder
+#anonymous_gsa_pooled.fasta.gz
+
+#config file used for creating the data set at hand (can be used as input to CAMISIM for re-creating the data set)
+#config.ini
+
+#mapping from the original (BIOM) OTU name to the genome fasta file
+#genome_to_id.tsv
+
+#genomes folder containing all the reference genomes used over all samples (using the mapping from genome_to_id.tsv)
+#genomes
+#This folder contains all the fasta files of the downloaded genomes:
+#genome_name.fa
+
+#Since the contigs are anonymized, a file mapping each contig to its genome/taxon id and position in the respective genome is provided
+#gsa_pooled_mapping.tsv.gz
+
+#To each input OTU (from the BIOM file), two tax IDs are mapped: 
+#One of the level on which the OTU was mapped to the NCBI and one to the specifically downloaded genome, 
+#contains a novelty_category column in case new genomes are provided, otherwise this column is "new_strain" and can be ignored
+#metadata.tsv
+
+#In the folder “hybrid” there are assembly and binning gold standards created from both the short and long read data sets. 
+#For every sample as well as all samples pooled, the bam-files of short and long read simulators 
+#(as described for the “bam” subfolder above) are merged and the gold standards calculated the same way as for the individual short or long read samples.
+
+
+https://www.microbiome-cosi.org/cami/cami/cami2
+
+*Benchmark first 10 samples as correlate to the POC study, all 64 samples as correlate to our study
+
+*Challenge is to take input reads and return a cross-sample assembly or single sample assembly
+*If cannot do a cross-assembly on all 64 samples, do the first 10 and submit first 10 co-assembly
+*Profiling- take input reads, return the profiles of the reads
+*Binning- take input reads or gold standard contigs, output is genome bin assignment for reads or contigs
+*Taxon binning- input reads or gold standard contigs, output is taxon bin
